@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KML 網頁地圖－高相容匯入版</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+
+<style>
+html,body{height:100%;margin:0;font-family:"Microsoft JhengHei",Arial,sans-serif}
+body{display:grid;grid-template-columns:350px 1fr;background:#f3f6fa;color:#1f2937}
+aside{height:100%;overflow:auto;background:#fff;border-right:1px solid #dbe3ec;padding:14px;z-index:1000}
+#map{height:100%;width:100%}
+h1{font-size:19px;margin:0 0 10px}
+h2{font-size:15px;margin:18px 0 8px;border-top:1px solid #dbe3ec;padding-top:12px}
+.small{font-size:12px;color:#64748b;line-height:1.5}
+.field{margin:9px 0}
+label{display:block;font-size:13px;font-weight:700;margin-bottom:5px}
+input{width:100%;padding:9px;border:1px solid #dbe3ec;border-radius:8px;background:#fff}
+button{width:100%;border:0;border-radius:8px;padding:10px;margin:5px 0;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}
+button.secondary{background:#475569}
+button.teal{background:#0f766e}
+button.danger{background:#b91c1c}
+button:disabled{opacity:.45}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.checklist{max-height:180px;overflow:auto;border:1px solid #dbe3ec;border-radius:8px;padding:8px;background:#fafcff}
+.checkitem{display:flex;align-items:center;gap:7px;padding:4px 2px;font-size:13px}
+.checkitem input{width:auto}
+.status{margin-top:10px;padding:9px;border-radius:8px;background:#eef4ff;font-size:12px;line-height:1.5}
+.error{display:none;margin-top:8px;padding:9px;border-radius:8px;background:#fff1f2;color:#991b1b;font-size:12px;line-height:1.5}
+.result-list{max-height:190px;overflow:auto;border:1px solid #dbe3ec;border-radius:8px;background:#fff}
+.result-item{padding:8px 9px;border-bottom:1px solid #edf1f5;cursor:pointer;font-size:13px}
+.result-item:hover{background:#eff6ff}
+.label-marker{white-space:nowrap;background:rgba(255,255,255,.92);border:1px solid rgba(15,23,42,.25);border-radius:4px;padding:1px 4px;font-size:11px;font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.section-label{white-space:nowrap;background:rgba(255,255,255,.88);border:1px solid rgba(180,83,9,.35);border-radius:4px;padding:1px 4px;font-size:11px;font-weight:700;color:#7c2d12}
+.popup{min-width:270px;max-width:540px}
+.popup h3{margin:0 0 8px}
+.popup table{border-collapse:collapse;width:100%;font-size:13px}
+.popup td{border-bottom:1px solid #edf1f5;padding:4px 5px;vertical-align:top}
+.popup td:first-child{font-weight:700;width:38%}
+.popup a{word-break:break-all}
+.photo-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:8px}
+.photo-grid img{display:block;width:100%;max-width:440px;height:auto;border-radius:8px;border:1px solid #d1d5db}
+.panorama-wrap{margin-top:10px}
+.panorama-viewer{width:100%;height:320px;border-radius:8px;overflow:hidden;background:#111}
+.panorama-title{font-weight:700;margin:6px 0}
+.panorama-open{display:inline-block;margin-top:8px;padding:8px 12px;border-radius:7px;background:#1a73e8;color:#fff!important;text-decoration:none;font-weight:700}
+.panorama-fallback{font-size:12px;color:#64748b;line-height:1.5;margin-top:6px}
+.scale-display{background:rgba(255,255,255,.95);padding:7px 10px;border-radius:7px;box-shadow:0 1px 5px rgba(0,0,0,.25);font-size:13px;font-weight:700}
+.mobile-toggle{display:none;position:absolute;top:10px;left:10px;z-index:1300;width:auto;padding:9px 12px}
+@media(max-width:820px){
+  body{display:block}
+  aside{position:absolute;left:0;top:0;width:min(88vw,350px);transform:translateX(-105%);transition:.2s;box-shadow:4px 0 16px rgba(0,0,0,.2)}
+  aside.open{transform:translateX(0)}
+  .mobile-toggle{display:block}
+}
+</style>
+</head>
+
+<body>
+<button id="mobileToggle" class="mobile-toggle" onclick="toggleSidebar()">☰ 選單</button>
+
+<aside id="sidebar">
+<h1>🗺️ KML 管理與查詢地圖</h1>
+<div class="small">
+此版使用傳統 FileReader 匯入，可一次選多個 KML，也可分批追加。支援 Point、Polygon、MultiGeometry、照片與環景。
+</div>
+
+<div id="adminBlock">
+<h2>管理者</h2>
+<div class="field">
+<label>KML 檔案（可多選）</label>
+<input id="kmlFile" type="file" accept=".kml,application/vnd.google-earth.kml+xml" multiple onchange="onFilesSelected()">
+</div>
+
+<div id="fileInfo" class="small">尚未選擇檔案</div>
+
+<button id="importBtn" onclick="handleImportClick()">匯入／追加 KML</button>
+<button id="exportBtn" class="teal" onclick="prepareUserHtml()" disabled>產生使用者版 HTML</button>
+
+<div id="exportArea" style="display:none;margin:8px 0;padding:10px;border:1px solid #86efac;border-radius:8px;background:#f0fdf4">
+<div class="small" style="margin-bottom:6px;color:#166534">檔案已產生：</div>
+<a id="downloadUserHtml" href="#" download="KML_使用者查詢地圖.html"
+style="display:block;text-align:center;padding:10px;border-radius:8px;background:#16a34a;color:#fff;text-decoration:none;font-weight:700">
+下載使用者版 HTML
+</a>
+</div>
+
+<button class="danger" onclick="clearAll()">清除資料</button>
+</div>
+
+<h2>使用者篩選</h2>
+<div class="field">
+<label>地段</label>
+<div id="sectionList" class="checklist"><span class="small">尚未載入資料</span></div>
+</div>
+
+<div class="field">
+<label>重測年度</label>
+<div id="yearList" class="checklist"><span class="small">尚未載入資料</span></div>
+</div>
+
+<div class="row">
+<button class="secondary" onclick="selectAllFilters()">全選</button>
+<button class="secondary" onclick="clearAllFilters()">全不選</button>
+</div>
+
+<h2>點名搜尋</h2>
+<div class="field">
+<input id="searchInput" type="text" placeholder="輸入點名，例如 FH114004" onkeydown="if(event.keyCode===13){doSearch();}">
+</div>
+<button onclick="doSearch()">搜尋並定位</button>
+<button class="teal" onclick="locateUser()">📍 定位我的目前位置</button>
+<div id="searchResults" class="result-list" style="display:none"></div>
+
+<h2>點名顯示比例尺</h2>
+<div class="small">目前比例尺介於以下範圍時顯示點名。</div>
+<div class="row">
+<div class="field">
+<label>較小比例尺分母</label>
+<input id="labelScaleMax" type="number" min="1" step="100" value="5000">
+</div>
+<div class="field">
+<label>較大比例尺分母</label>
+<input id="labelScaleMin" type="number" min="1" step="100" value="500">
+</div>
+</div>
+<button class="secondary" onclick="updateLabels()">套用比例尺範圍</button>
+
+<div id="status" class="status">頁面已載入，請選擇 KML。</div>
+<div id="runtimeError" class="error"></div>
+</aside>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+
+<script>
+var EMBEDDED_DATA = null;
+var USER_MODE = false;
+
+var map = null;
+var records = [];
+var pointEntries = [];
+var polygonEntries = [];
+var labelLayer = null;
+var sectionLabelLayer = null;
+var selectedSections = {};
+var selectedYears = {};
+var userLocationMarker = null;
+var userAccuracyCircle = null;
+
+function $(id){
+  return document.getElementById(id);
+}
+
+function showError(msg){
+  var box = $("runtimeError");
+  if(box){
+    box.style.display = "block";
+    box.innerHTML = escapeHtml(msg);
+  }
+}
+
+function clearError(){
+  var box = $("runtimeError");
+  if(box){
+    box.style.display = "none";
+    box.innerHTML = "";
+  }
+}
+
+function setStatus(msg){
+  if($("status")) $("status").innerHTML = escapeHtml(msg);
+}
+
+function escapeHtml(value){
+  return String(value == null ? "" : value)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#39;");
+}
+
+window.onerror = function(message, source, lineno, colno){
+  showError("頁面執行錯誤：" + message + "（第 " + lineno + " 行）");
+};
+
+function initMap(){
+  if(typeof L === "undefined"){
+    showError("Leaflet 地圖程式庫載入失敗，請確認網路連線。");
+    return;
+  }
+
+  map = L.map("map",{
+    minZoom:3,
+    maxZoom:24
+  }).setView([23.7,121],7);
+
+  map.createPane("sectionPane");
+  map.getPane("sectionPane").style.zIndex = 350;
+
+  map.createPane("pointPane");
+  map.getPane("pointPane").style.zIndex = 650;
+
+  map.createPane("labelPane");
+  map.getPane("labelPane").style.zIndex = 700;
+  map.getPane("labelPane").style.pointerEvents = "none";
+
+  var osm = L.tileLayer(
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxNativeZoom:19,maxZoom:24,attribution:"&copy; OpenStreetMap contributors"}
+  );
+
+  var emap = L.tileLayer(
+    "https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}",
+    {minZoom:6,maxNativeZoom:19,maxZoom:24,attribution:"內政部國土測繪中心"}
+  );
+
+  var photo = L.tileLayer(
+    "https://wmts.nlsc.gov.tw/wmts/PHOTO2/default/GoogleMapsCompatible/{z}/{y}/{x}",
+    {minZoom:6,maxNativeZoom:19,maxZoom:24,attribution:"內政部國土測繪中心"}
+  );
+
+  var landsect = L.tileLayer(
+    "https://wmts.nlsc.gov.tw/wmts/LANDSECT/default/GoogleMapsCompatible/{z}/{y}/{x}",
+    {minZoom:6,maxNativeZoom:18,maxZoom:24,opacity:.85,attribution:"內政部國土測繪中心－地段外圍圖"}
+  );
+
+  emap.addTo(map);
+
+  L.control.layers(
+    {
+      "內政部－臺灣通用電子地圖":emap,
+      "內政部－正射影像":photo,
+      "OpenStreetMap":osm
+    },
+    {
+      "內政部－地段外圍圖":landsect
+    },
+    {position:"topright",collapsed:true}
+  ).addTo(map);
+
+  L.control.scale({position:"bottomleft",metric:true,imperial:false,maxWidth:180}).addTo(map);
+
+  var scaleControl = L.control({position:"bottomright"});
+  scaleControl.onAdd = function(){
+    var div = L.DomUtil.create("div","scale-display");
+    div.id = "currentScaleText";
+    div.innerHTML = "目前比例尺計算中…";
+    return div;
+  };
+  scaleControl.addTo(map);
+
+  labelLayer = L.layerGroup().addTo(map);
+  sectionLabelLayer = L.layerGroup().addTo(map);
+
+  map.on("zoomend",function(){updateLabels();});
+  map.on("moveend",function(){updateLabels();});
+
+  updateScaleDisplay();
+}
+
+function onFilesSelected(){
+  clearError();
+  var input = $("kmlFile");
+  var files = input && input.files ? input.files : [];
+  var names = [];
+  var i;
+
+  for(i=0;i<files.length;i++){
+    names.push(files[i].name);
+  }
+
+  $("fileInfo").innerHTML =
+    files.length ?
+    "已選擇 " + files.length + " 個檔案：<br>" + names.map(escapeHtml).join("<br>") :
+    "尚未選擇檔案";
+
+  setStatus(files.length ? "檔案已選擇，可以按「匯入／追加 KML」。" : "尚未選擇 KML。");
+}
+
+function handleImportClick(){
+  clearError();
+
+  var input = $("kmlFile");
+  var files = input && input.files ? input.files : [];
+
+  if(!files.length){
+    alert("請先選擇至少一個 KML 檔案。");
+    setStatus("尚未選擇 KML。");
+    return;
+  }
+
+  $("importBtn").disabled = true;
+  setStatus("開始讀取 " + files.length + " 個 KML…");
+
+  var index = 0;
+  var imported = [];
+  var failed = [];
+
+  function readNext(){
+    if(index >= files.length){
+      finishImport(imported, failed);
+      return;
+    }
+
+    var file = files[index];
+    var reader = new FileReader();
+
+    setStatus("正在讀取：" + file.name);
+
+    reader.onload = function(e){
+      try{
+        var parsed = parseKml(String(e.target.result || ""));
+        var j;
+
+        for(j=0;j<parsed.length;j++){
+          parsed[j].sourceFile = file.name;
+          imported.push(parsed[j]);
+        }
+      }catch(err){
+        failed.push(file.name + "：" + (err.message || String(err)));
+      }
+
+      index++;
+      readNext();
+    };
+
+    reader.onerror = function(){
+      failed.push(file.name + "：檔案讀取失敗");
+      index++;
+      readNext();
+    };
+
+    reader.readAsText(file,"UTF-8");
+  }
+
+  readNext();
+}
+
+function finishImport(imported, failed){
+  try{
+    if(!imported.length){
+      throw new Error(
+        failed.length ?
+        "所有 KML 都匯入失敗：" + failed.join("；") :
+        "KML 中找不到可用的 Point 或 Polygon。"
+      );
+    }
+
+    var i;
+    for(i=0;i<imported.length;i++){
+      records.push(imported[i]);
+    }
+
+    records = removeDuplicates(records);
+
+    buildMap();
+
+    $("exportBtn").disabled = false;
+    $("exportArea").style.display = "none";
+    $("kmlFile").value = "";
+    $("fileInfo").innerHTML = "尚未選擇檔案";
+
+    var pointCount = 0;
+    var polyCount = 0;
+
+    for(i=0;i<records.length;i++){
+      if(records[i].geometryType === "Polygon") polyCount++;
+      else pointCount++;
+    }
+
+    var msg =
+      "匯入完成：點位 " + pointCount +
+      " 筆、地段範圍 " + polyCount + " 筆。";
+
+    if(failed.length){
+      msg += " 失敗檔案：" + failed.length + " 個。";
+      showError(failed.join("\n"));
+    }
+
+    saveMapState();
+    setStatus(msg);
+
+  }catch(err){
+    alert("匯入失敗：" + (err.message || String(err)));
+    showError("匯入失敗：" + (err.message || String(err)));
+    setStatus("匯入失敗。");
+  }
+
+  $("importBtn").disabled = false;
+}
+
+function removeDuplicates(items){
+  var mapObj = {};
+  var out = [];
+  var i,r,key;
+
+  for(i=0;i<items.length;i++){
+    r = items[i];
+
+    if(r.geometryType === "Polygon"){
+      key = "P|" + r.name + "|" + r.section + "|" + JSON.stringify(r.polygons || []);
+    }else{
+      key = "T|" + r.name + "|" +
+        Number(r.lat).toFixed(10) + "|" +
+        Number(r.lon).toFixed(10) + "|" +
+        r.section + "|" + r.year;
+    }
+
+    if(!mapObj[key]){
+      mapObj[key] = true;
+      out.push(r);
+    }
+  }
+
+  return out;
+}
+
+function parseKml(txt){
+  var xml = new DOMParser().parseFromString(txt,"application/xml");
+
+  if(xml.getElementsByTagName("parsererror").length){
+    throw new Error("KML 格式解析失敗。");
+  }
+
+  var placemarks = xml.getElementsByTagNameNS("*","Placemark");
+  var out = [];
+  var i;
+
+  function parseCoordList(coordText){
+    var tokens = String(coordText || "").replace(/^\s+|\s+$/g,"").split(/\s+/);
+    var pts = [];
+    var k,p,lon,lat;
+
+    for(k=0;k<tokens.length;k++){
+      p = tokens[k].split(",");
+      lon = Number(p[0]);
+      lat = Number(p[1]);
+
+      if(isFinite(lon) && isFinite(lat)){
+        pts.push([lat,lon]);
+      }
+    }
+
+    return pts;
+  }
+
+  for(i=0;i<placemarks.length;i++){
+    var pm = placemarks[i];
+    var nameEls = pm.getElementsByTagNameNS("*","name");
+    var name = nameEls.length ? String(nameEls[0].textContent || "").replace(/^\s+|\s+$/g,"") : "未命名";
+
+    var attrs = {};
+    var dataEls = pm.getElementsByTagNameNS("*","Data");
+    var j;
+
+    for(j=0;j<dataEls.length;j++){
+      var key = dataEls[j].getAttribute("name");
+      var valueEls = dataEls[j].getElementsByTagNameNS("*","value");
+      if(key){
+        attrs[key] = valueEls.length ? String(valueEls[0].textContent || "").replace(/^\s+|\s+$/g,"") : "";
+      }
+    }
+
+    var simpleEls = pm.getElementsByTagNameNS("*","SimpleData");
+    for(j=0;j<simpleEls.length;j++){
+      var skey = simpleEls[j].getAttribute("name");
+      if(skey){
+        attrs[skey] = String(simpleEls[j].textContent || "").replace(/^\s+|\s+$/g,"");
+      }
+    }
+
+    var section = attrs["地段名"] || attrs["SECTION_NA"] || "";
+    var year = attrs["重測年"] || attrs["年度"] || "未註明";
+
+    var pointEls = pm.getElementsByTagNameNS("*","Point");
+
+    if(pointEls.length){
+      var coordEls = pointEls[0].getElementsByTagNameNS("*","coordinates");
+
+      if(coordEls.length){
+        var pts = parseCoordList(coordEls[0].textContent);
+
+        if(pts.length){
+          out.push({
+            geometryType:"Point",
+            name:name || attrs["點名"] || "未命名",
+            section:section || "未分類",
+            year:String(year),
+            lat:pts[0][0],
+            lon:pts[0][1],
+            attrs:attrs
+          });
+        }
+      }
+    }
+
+    var polygonEls = pm.getElementsByTagNameNS("*","Polygon");
+
+    if(polygonEls.length){
+      var polygons = [];
+
+      for(j=0;j<polygonEls.length;j++){
+        var poly = polygonEls[j];
+        var outerEls = poly.getElementsByTagNameNS("*","outerBoundaryIs");
+
+        if(!outerEls.length) continue;
+
+        var outCoordEls = outerEls[0].getElementsByTagNameNS("*","coordinates");
+        if(!outCoordEls.length) continue;
+
+        var outerRing = parseCoordList(outCoordEls[0].textContent);
+        if(outerRing.length < 3) continue;
+
+        var rings = [outerRing];
+        var innerEls = poly.getElementsByTagNameNS("*","innerBoundaryIs");
+        var m;
+
+        for(m=0;m<innerEls.length;m++){
+          var inCoordEls = innerEls[m].getElementsByTagNameNS("*","coordinates");
+
+          if(inCoordEls.length){
+            var innerRing = parseCoordList(inCoordEls[0].textContent);
+            if(innerRing.length >= 3) rings.push(innerRing);
+          }
+        }
+
+        polygons.push(rings);
+      }
+
+      if(polygons.length){
+        out.push({
+          geometryType:"Polygon",
+          name:name,
+          section:section || name || "未分類",
+          year:"地段範圍",
+          polygons:polygons,
+          attrs:attrs
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
+function yearColor(year, years){
+  var nums = [];
+  var i,v;
+
+  for(i=0;i<years.length;i++){
+    v = Number(years[i]);
+    if(isFinite(v)) nums.push(v);
+  }
+
+  nums.sort(function(a,b){return a-b;});
+
+  v = Number(year);
+
+  if(!nums.length || !isFinite(v)) return "#64748b";
+
+  var min = nums[0];
+  var max = nums[nums.length-1];
+  var t = max===min ? .5 : (v-min)/(max-min);
+  var r,g,b,u;
+
+  if(t<.25){
+    u=t/.25;r=0;g=Math.round(255*u);b=255;
+  }else if(t<.5){
+    u=(t-.25)/.25;r=0;g=255;b=Math.round(255*(1-u));
+  }else if(t<.75){
+    u=(t-.5)/.25;r=Math.round(255*u);g=255;b=0;
+  }else{
+    u=(t-.75)/.25;r=255;g=Math.round(255*(1-u));b=0;
+  }
+
+  return "rgb("+r+","+g+","+b+")";
+}
+
+function extractIframeSrc(value){
+  var s = String(value || "");
+  var m = s.match(/<iframe\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/i);
+  return m ? m[1] : "";
+}
+
+function splitUrls(value){
+  var s = String(value || "");
+  var iframeSrc = extractIframeSrc(s);
+
+  if(iframeSrc) return [iframeSrc];
+
+  var lines = s.split(/\r?\n/);
+  var out = [];
+  var i,t;
+
+  for(i=0;i<lines.length;i++){
+    t = lines[i].replace(/^\s+|\s+$/g,"");
+    if(/^https?:\/\//i.test(t)) out.push(t);
+  }
+
+  return out;
+}
+
+function isDirectPanoramaImage(url){
+  var clean = String(url || "").split("?")[0].toLowerCase();
+
+  if(/\.(jpg|jpeg|png|webp)$/.test(clean)) return true;
+  if(/drive\.google\.com\/uc\?/i.test(url)) return true;
+  if(/googleusercontent\.com/i.test(url)) return true;
+
+  return false;
+}
+
+function isEmbeddablePanoramaUrl(url){
+  var u = String(url || "");
+
+  if(/kuula\.co\//i.test(u)) return true;
+  if(/panoee\.(live|com)\//i.test(u)) return true;
+  if(/\/embed(?:\/|\?|$)/i.test(u)) return true;
+
+  return false;
+}
+
+function iframePanoramaHtml(src,index){
+  var safe = escapeHtml(src);
+  var frameId = "embedPano_" + new Date().getTime() + "_" + index + "_" + Math.floor(Math.random()*100000);
+  var isLocalFile = (window.location.protocol === "file:");
+
+  if(isLocalFile){
+    return ''+
+      '<div class="panorama-wrap">'+
+      '<div class="panorama-title">360° 環景'+(index>0?' '+(index+1):'')+'</div>'+
+      '<div style="padding:14px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412;line-height:1.6">'+
+        '<b>目前以本機 HTML 開啟</b><br>'+
+        '瀏覽器會限制本機檔案直接內嵌 Panoee / Kuula。'+
+        '請將此 HTML 發布到 HTTPS 網站後，即可在此處直接顯示 360° 環景。'+
+      '</div>'+
+      '<a class="panorama-open" href="'+safe+'" target="_blank" rel="noopener">先以新分頁開啟環景</a>'+
+      '</div>';
+  }
+
+  return ''+
+    '<div class="panorama-wrap">'+
+    '<div class="panorama-title">360° 環景'+(index>0?' '+(index+1):'')+'</div>'+
+    '<div id="'+frameId+'" style="width:100%;height:360px;border-radius:8px;background:#111;overflow:hidden">'+
+      '<iframe src="'+safe+'" '+
+      'style="width:100%;height:360px;border:0;background:#111" '+
+      'loading="lazy" '+
+      'allow="fullscreen; gyroscope; accelerometer; xr-spatial-tracking" '+
+      'allowfullscreen></iframe>'+
+    '</div>'+
+    '<a class="panorama-open" href="'+safe+'" target="_blank" rel="noopener">全螢幕開啟環景</a>'+
+    '</div>';
+}
+
+function loadEmbeddedPanoramaFromButton(btn){
+  if(!btn) return;
+  var src = btn.getAttribute("data-pano-src") || "";
+  var frameId = btn.getAttribute("data-pano-target") || "";
+  loadEmbeddedPanorama(src,frameId);
+}
+
+function loadEmbeddedPanorama(src,frameId){
+  try{
+    if(window.location.protocol === "file:"){
+      window.open(src,"_blank");
+      setStatus("目前是本機 HTML，環景已改用新分頁開啟。若要在資訊欄內直接顯示，請將 HTML 發布到 HTTPS 網站。");
+      return;
+    }
+
+    var holder=$(frameId);
+    if(!holder) return;
+
+    holder.innerHTML =
+      '<iframe src="'+escapeHtml(src)+'" '+
+      'style="width:100%;height:360px;border:0;border-radius:8px;background:#111" '+
+      'allow="fullscreen; gyroscope; accelerometer; xr-spatial-tracking" '+
+      'allowfullscreen></iframe>';
+
+    setStatus("環景已載入。");
+  }catch(err){
+    showError("環景載入失敗："+(err.message||String(err)));
+  }
+}
+
+function buildPhotoHtml(attrs){
+  var photoFields = ["照片","圖片","圖片連結","一般照片","PHOTO","IMAGE"];
+  var panoFields = ["環景相片","環景照片","PANORAMA","環景圖片","360環景","360圖片"];
+  var photoUrls = [];
+  var panoUrls = [];
+  var i,j,key,val,src,urls,html="";
+
+  for(i=0;i<photoFields.length;i++){
+    key=photoFields[i];
+    val=attrs[key];
+
+    if(!val) continue;
+
+    src=extractIframeSrc(val);
+
+    if(src){
+      panoUrls.push(src);
+    }else{
+      urls=splitUrls(val);
+      for(j=0;j<urls.length;j++) photoUrls.push(urls[j]);
+    }
+  }
+
+  for(i=0;i<panoFields.length;i++){
+    key=panoFields[i];
+    val=attrs[key];
+
+    if(!val) continue;
+
+    src=extractIframeSrc(val);
+
+    if(src){
+      panoUrls.push(src);
+    }else{
+      urls=splitUrls(val);
+      for(j=0;j<urls.length;j++) panoUrls.push(urls[j]);
+    }
+  }
+
+  if(panoUrls.length){
+    html += "<hr><b>環景檢視</b>";
+
+    for(i=0;i<panoUrls.length;i++){
+      if(isEmbeddablePanoramaUrl(panoUrls[i])){
+        html += iframePanoramaHtml(panoUrls[i],i);
+      }else if(isDirectPanoramaImage(panoUrls[i])){
+        var id = "pano_"+new Date().getTime()+"_"+i+"_"+Math.floor(Math.random()*100000);
+        html += ''+
+          '<div class="panorama-wrap">'+
+          '<div class="panorama-title">360° 環景'+(i>0?' '+(i+1):'')+'</div>'+
+          '<div id="'+id+'" class="panorama-viewer" data-pano-url="'+escapeHtml(panoUrls[i])+'"></div>'+
+          '<a class="panorama-open" href="'+escapeHtml(panoUrls[i])+'" target="_blank">開啟原始環景圖片</a>'+
+          '</div>';
+      }else{
+        html += ''+
+          '<div class="panorama-wrap">'+
+          '<a class="panorama-open" href="'+escapeHtml(panoUrls[i])+'" target="_blank">查看環景相片</a>'+
+          '<div class="panorama-fallback">'+escapeHtml(panoUrls[i])+'</div>'+
+          '</div>';
+      }
+    }
+  }
+
+  if(photoUrls.length){
+    html += '<hr><b>照片</b><div class="photo-grid">';
+
+    for(i=0;i<photoUrls.length;i++){
+      html += '<a href="'+escapeHtml(photoUrls[i])+'" target="_blank">'+
+              '<img src="'+escapeHtml(photoUrls[i])+'" loading="lazy" alt="照片"></a>';
+    }
+
+    html += '</div>';
+  }
+
+  return html;
+}
+
+function linkify(value){
+  var s=String(value || "");
+  var lines=s.split(/\r?\n/);
+  var out=[],i,t;
+
+  for(i=0;i<lines.length;i++){
+    t=lines[i].replace(/^\s+|\s+$/g,"");
+
+    if(/^https?:\/\//i.test(t)){
+      out.push('<a href="'+escapeHtml(t)+'" target="_blank">'+escapeHtml(t)+'</a>');
+    }else{
+      out.push(escapeHtml(t));
+    }
+  }
+
+  return out.join("<br>");
+}
+
+function popupHtml(r){
+  var preferred=["段代碼","地段名","點名","Y","X","重測年","來源座標系統","輸出座標系統"];
+  var rows="",used={},i,k;
+
+  for(i=0;i<preferred.length;i++){
+    k=preferred[i];
+
+    if(typeof r.attrs[k] !== "undefined"){
+      rows += "<tr><td>"+escapeHtml(k)+"</td><td>"+linkify(r.attrs[k])+"</td></tr>";
+      used[k]=true;
+    }
+  }
+
+  for(k in r.attrs){
+    if(r.attrs.hasOwnProperty(k) && !used[k] &&
+       k!=="照片" && k!=="圖片" && k!=="圖片連結" &&
+       k!=="環景相片" && k!=="PANORAMA"){
+      rows += "<tr><td>"+escapeHtml(k)+"</td><td>"+linkify(r.attrs[k])+"</td></tr>";
+    }
+  }
+
+  if(r.sourceFile){
+    rows += "<tr><td>來源KML</td><td>"+escapeHtml(r.sourceFile)+"</td></tr>";
+  }
+
+  return '<div class="popup"><h3>'+escapeHtml(r.name)+'</h3>'+
+         '<table>'+rows+'</table>'+buildPhotoHtml(r.attrs)+'</div>';
+}
+
+function initPanoramasInPopup(){
+  if(typeof pannellum === "undefined") return;
+
+  var els=document.querySelectorAll(".leaflet-popup .panorama-viewer[data-pano-url]");
+  var i;
+
+  for(i=0;i<els.length;i++){
+    if(els[i].getAttribute("data-inited")==="1") continue;
+
+    try{
+      pannellum.viewer(els[i].id,{
+        type:"equirectangular",
+        panorama:els[i].getAttribute("data-pano-url"),
+        autoLoad:true,
+        showControls:true,
+        hfov:100
+      });
+
+      els[i].setAttribute("data-inited","1");
+    }catch(err){}
+  }
+}
+
+function buildChecklist(id,values,setObj,type){
+  var box=$(id);
+  box.innerHTML="";
+  var i;
+
+  for(i=0;i<values.length;i++){
+    setObj[values[i]]=true;
+
+    var label=document.createElement("label");
+    label.className="checkitem";
+
+    var cb=document.createElement("input");
+    cb.type="checkbox";
+    cb.checked=true;
+    cb.setAttribute("data-value",values[i]);
+    cb.setAttribute("data-type",type);
+
+    cb.onclick=function(){
+      var val=this.getAttribute("data-value");
+      var typ=this.getAttribute("data-type");
+      var target=typ==="section"?selectedSections:selectedYears;
+
+      if(this.checked) target[val]=true;
+      else delete target[val];
+
+      applyFilters();
+    };
+
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(values[i]));
+    box.appendChild(label);
+  }
+}
+
+function uniqueSorted(values,numeric){
+  var obj={},out=[],i;
+
+  for(i=0;i<values.length;i++){
+    if(!obj[values[i]]){
+      obj[values[i]]=true;
+      out.push(values[i]);
+    }
+  }
+
+  if(numeric){
+    out.sort(function(a,b){return Number(a)-Number(b);});
+  }else{
+    out.sort();
+  }
+
+  return out;
+}
+
+function buildMap(){
+  var i;
+
+  for(i=0;i<pointEntries.length;i++){
+    if(map.hasLayer(pointEntries[i].marker)) map.removeLayer(pointEntries[i].marker);
+  }
+
+  for(i=0;i<polygonEntries.length;i++){
+    if(map.hasLayer(polygonEntries[i].layer)) map.removeLayer(polygonEntries[i].layer);
+  }
+
+  pointEntries=[];
+  polygonEntries=[];
+  labelLayer.clearLayers();
+  sectionLabelLayer.clearLayers();
+
+  var pointRecords=[];
+  var polygonRecords=[];
+  var years=[];
+  var sections=[];
+  var bounds=[];
+
+  for(i=0;i<records.length;i++){
+    sections.push(records[i].section);
+
+    if(records[i].geometryType==="Polygon"){
+      polygonRecords.push(records[i]);
+    }else{
+      pointRecords.push(records[i]);
+      years.push(records[i].year);
+    }
+  }
+
+  var uniqYears=uniqueSorted(years,true);
+
+  for(i=0;i<pointRecords.length;i++){
+    (function(r){
+      var marker=L.circleMarker([r.lat,r.lon],{
+        pane:"pointPane",
+        radius:7,
+        color:"#111827",
+        weight:1,
+        fillColor:yearColor(r.year,uniqYears),
+        fillOpacity:.9
+      }).bindPopup(popupHtml(r),{
+        maxWidth:560,
+        autoPan:true,
+        keepInView:true
+      });
+
+      marker.on("popupopen",function(){
+        labelLayer.clearLayers();
+        sectionLabelLayer.clearLayers();
+        if(marker.bringToFront) marker.bringToFront();
+        setTimeout(initPanoramasInPopup,100);
+      });
+
+      marker.on("popupclose",function(){
+        updateLabels();
+      });
+
+      var label=L.marker([r.lat,r.lon],{
+        pane:"labelPane",
+        interactive:false,
+        icon:L.divIcon({
+          className:"",
+          html:'<div class="label-marker">'+escapeHtml(r.name)+'</div>',
+          iconAnchor:[-8,11]
+        })
+      });
+
+      pointEntries.push({record:r,marker:marker,label:label});
+      bounds.push([r.lat,r.lon]);
+    })(pointRecords[i]);
+  }
+
+  for(i=0;i<polygonRecords.length;i++){
+    (function(r){
+      var latlngs=r.polygons.length===1?r.polygons[0]:r.polygons;
+
+      var layer=L.polygon(latlngs,{
+        pane:"sectionPane",
+        color:"#b45309",
+        weight:2,
+        opacity:.9,
+        fillColor:"#f59e0b",
+        fillOpacity:.10
+      });
+
+      var rows="",k;
+
+      for(k in r.attrs){
+        if(r.attrs.hasOwnProperty(k)){
+          rows += "<tr><td>"+escapeHtml(k)+"</td><td>"+linkify(r.attrs[k])+"</td></tr>";
+        }
+      }
+
+      layer.bindPopup(
+        '<div class="popup"><h3>'+escapeHtml(r.name)+'</h3>'+
+        (rows?'<table>'+rows+'</table>':'')+'</div>'
+      );
+
+      var center=layer.getBounds().getCenter();
+
+      var label=L.marker(center,{
+        pane:"labelPane",
+        interactive:false,
+        icon:L.divIcon({
+          className:"",
+          html:'<div class="section-label">'+escapeHtml(r.name)+'</div>',
+          iconAnchor:[-8,11]
+        })
+      });
+
+      polygonEntries.push({record:r,layer:layer,label:label});
+
+      var b=layer.getBounds();
+      bounds.push([b.getNorth(),b.getWest()]);
+      bounds.push([b.getSouth(),b.getEast()]);
+    })(polygonRecords[i]);
+  }
+
+  selectedSections={};
+  selectedYears={};
+
+  buildChecklist("sectionList",uniqueSorted(sections,false),selectedSections,"section");
+  buildChecklist("yearList",uniqYears,selectedYears,"year");
+
+  applyFilters();
+
+  if(bounds.length){
+    map.fitBounds(bounds,{padding:[30,30]});
+  }
+}
+
+function applyFilters(){
+  var i,e,show;
+
+  labelLayer.clearLayers();
+  sectionLabelLayer.clearLayers();
+
+  for(i=0;i<pointEntries.length;i++){
+    e=pointEntries[i];
+    show=selectedSections[e.record.section] && selectedYears[e.record.year];
+
+    if(show){
+      if(!map.hasLayer(e.marker)) e.marker.addTo(map);
+    }else{
+      if(map.hasLayer(e.marker)) map.removeLayer(e.marker);
+    }
+  }
+
+  for(i=0;i<polygonEntries.length;i++){
+    e=polygonEntries[i];
+    show=selectedSections[e.record.section];
+
+    if(show){
+      if(!map.hasLayer(e.layer)) e.layer.addTo(map);
+    }else{
+      if(map.hasLayer(e.layer)) map.removeLayer(e.layer);
+    }
+  }
+
+  updateLabels();
+}
+
+function getCurrentScaleDenominator(){
+  if(!map) return 1;
+
+  var center=map.getCenter();
+  var zoom=map.getZoom();
+  var metersPerPixel=
+    156543.03392804097*Math.cos(center.lat*Math.PI/180)/Math.pow(2,zoom);
+
+  return Math.max(1,Math.round(metersPerPixel/(0.0254/96)));
+}
+
+function updateScaleDisplay(){
+  var el=$("currentScaleText");
+  if(el){
+    el.innerHTML="目前比例尺約 1:"+getCurrentScaleDenominator().toLocaleString();
+  }
+}
+
+function updateLabels(){
+  if(!map) return;
+
+  labelLayer.clearLayers();
+  sectionLabelLayer.clearLayers();
+
+  var current=getCurrentScaleDenominator();
+  var low=Math.min(Number($("labelScaleMin").value)||500,Number($("labelScaleMax").value)||5000);
+  var high=Math.max(Number($("labelScaleMin").value)||500,Number($("labelScaleMax").value)||5000);
+  var i;
+
+  if(current>=low && current<=high){
+    for(i=0;i<pointEntries.length;i++){
+      if(map.hasLayer(pointEntries[i].marker)) labelLayer.addLayer(pointEntries[i].label);
+    }
+  }
+
+  if(current<=20000){
+    for(i=0;i<polygonEntries.length;i++){
+      if(map.hasLayer(polygonEntries[i].layer)) sectionLabelLayer.addLayer(polygonEntries[i].label);
+    }
+  }
+
+  updateScaleDisplay();
+}
+
+function syncChecks(){
+  var cbs=document.querySelectorAll(".checkitem input");
+  var i,val,type,target;
+
+  for(i=0;i<cbs.length;i++){
+    val=cbs[i].getAttribute("data-value");
+    type=cbs[i].getAttribute("data-type");
+    target=type==="section"?selectedSections:selectedYears;
+    cbs[i].checked=!!target[val];
+  }
+}
+
+function selectAllFilters(){
+  var i;
+
+  for(i=0;i<records.length;i++){
+    selectedSections[records[i].section]=true;
+    if(records[i].geometryType!=="Polygon") selectedYears[records[i].year]=true;
+  }
+
+  syncChecks();
+  applyFilters();
+}
+
+function clearAllFilters(){
+  selectedSections={};
+  selectedYears={};
+  syncChecks();
+  applyFilters();
+}
+
+function doSearch(){
+  var q=String($("searchInput").value||"").toLowerCase();
+  var box=$("searchResults");
+  box.innerHTML="";
+
+  if(!q){
+    box.style.display="none";
+    return;
+  }
+
+  var hits=[],i;
+
+  for(i=0;i<pointEntries.length;i++){
+    if(String(pointEntries[i].record.name).toLowerCase().indexOf(q)>=0){
+      hits.push(pointEntries[i]);
+    }
+  }
+
+  box.style.display="block";
+
+  if(!hits.length){
+    box.innerHTML='<div class="result-item">查無資料</div>';
+    return;
+  }
+
+  for(i=0;i<hits.length && i<100;i++){
+    (function(e){
+      var d=document.createElement("div");
+      d.className="result-item";
+      d.innerHTML=escapeHtml(e.record.name+"｜"+e.record.section+"｜"+e.record.year);
+
+      d.onclick=function(){
+        selectedSections[e.record.section]=true;
+        selectedYears[e.record.year]=true;
+        syncChecks();
+        applyFilters();
+        map.setView([e.record.lat,e.record.lon],18);
+        e.marker.openPopup();
+      };
+
+      box.appendChild(d);
+    })(hits[i]);
+  }
+}
+
+function locateUser(){
+  if(!navigator.geolocation){
+    alert("此瀏覽器不支援定位功能。");
+    return;
+  }
+
+  setStatus("正在取得目前位置…");
+
+  navigator.geolocation.getCurrentPosition(
+    function(pos){
+      var lat=pos.coords.latitude;
+      var lon=pos.coords.longitude;
+      var accuracy=pos.coords.accuracy||0;
+
+      if(userLocationMarker) map.removeLayer(userLocationMarker);
+      if(userAccuracyCircle) map.removeLayer(userAccuracyCircle);
+
+      userLocationMarker=L.marker([lat,lon]).addTo(map)
+        .bindPopup("<b>我的目前位置</b><br>定位精度：約 "+Math.round(accuracy)+" 公尺");
+
+      userAccuracyCircle=L.circle([lat,lon],{
+        radius:accuracy,
+        weight:1,
+        fillOpacity:.08
+      }).addTo(map);
+
+      map.setView([lat,lon],19);
+      userLocationMarker.openPopup();
+      setStatus("定位完成。");
+    },
+    function(){
+      alert("無法取得目前位置。請確認定位權限。");
+      setStatus("定位失敗。");
+    },
+    {enableHighAccuracy:true,timeout:15000,maximumAge:5000}
+  );
+}
+
+function saveMapState(){
+  try{
+    if(window.localStorage){
+      localStorage.setItem("kmlMapRecords", JSON.stringify(records));
+      localStorage.setItem("kmlMapSavedAt", String(new Date().getTime()));
+    }
+  }catch(err){
+    console.warn("無法保存 KML 狀態：",err);
+  }
+}
+
+function restoreMapState(){
+  try{
+    if(!window.localStorage) return false;
+
+    var saved = localStorage.getItem("kmlMapRecords");
+    if(!saved) return false;
+
+    var parsed = JSON.parse(saved);
+    if(!parsed || !parsed.length) return false;
+
+    records = parsed;
+    buildMap();
+
+    if($("exportBtn")) $("exportBtn").disabled=false;
+
+    setStatus(
+      "已自動還原先前匯入的 KML，共 " + records.length +
+      " 筆資料。"
+    );
+
+    return true;
+  }catch(err){
+    console.warn("還原 KML 狀態失敗：",err);
+    return false;
+  }
+}
+
+function clearSavedMapState(){
+  try{
+    if(window.localStorage){
+      localStorage.removeItem("kmlMapRecords");
+      localStorage.removeItem("kmlMapSavedAt");
+    }
+  }catch(err){}
+}
+
+function clearAll(){
+  records=[];
+  clearSavedMapState();
+  buildMap();
+  $("sectionList").innerHTML='<span class="small">尚未載入資料</span>';
+  $("yearList").innerHTML='<span class="small">尚未載入資料</span>';
+  $("searchResults").style.display="none";
+  $("exportBtn").disabled=true;
+  $("exportArea").style.display="none";
+  setStatus("已清除資料。");
+}
+
+function prepareUserHtml(){
+  try{
+    if(!records.length){
+      alert("目前沒有可匯出的資料。");
+      return;
+    }
+
+    var out="<!DOCTYPE html>\n"+document.documentElement.outerHTML;
+
+    out=out.replace(
+      "var EMBEDDED_DATA = null;",
+      "var EMBEDDED_DATA = "+JSON.stringify(records).replace(/</g,"\\u003c")+";"
+    );
+
+    out=out.replace("var USER_MODE = false;","var USER_MODE = true;");
+
+    var blob=new Blob(["\ufeff",out],{type:"text/html;charset=utf-8"});
+    var url=URL.createObjectURL(blob);
+    var link=$("downloadUserHtml");
+
+    link.href=url;
+    $("exportArea").style.display="block";
+    setStatus("使用者版 HTML 已產生，請點綠色連結下載。");
+  }catch(err){
+    showError("匯出失敗："+(err.message||String(err)));
+  }
+}
+
+function toggleSidebar(){
+  var s=$("sidebar");
+  if(s.className.indexOf("open")>=0){
+    s.className=s.className.replace(/\bopen\b/g,"");
+  }else{
+    s.className += " open";
+  }
+}
+
+initMap();
+
+if(EMBEDDED_DATA && EMBEDDED_DATA.length){
+  records=EMBEDDED_DATA;
+  buildMap();
+}else{
+  restoreMapState();
+}
+
+if(USER_MODE){
+  var admin=$("adminBlock");
+  if(admin) admin.parentNode.removeChild(admin);
+}
+
+if(!records.length){
+  if(window.location.protocol === "file:"){
+    setStatus("系統已就緒。目前為本機 HTML 模式；KML 可正常使用，但 Panoee / Kuula 需發布到 HTTPS 網站後才能在資訊欄內直接嵌入。");
+  }else{
+    setStatus("系統已就緒。選擇 KML 後，檔名會顯示在上方。");
+  }
+}
+</script>
+</body>
+</html>
