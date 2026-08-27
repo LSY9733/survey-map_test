@@ -461,7 +461,7 @@ style="display:block;text-align:center;padding:10px;border-radius:8px;background
 
 <h2>點名搜尋</h2>
 <div class="field">
-<input id="searchInput" type="text" placeholder="輸入點名，例如 FH114004" onkeydown="if(event.keyCode===13){doSearch();}">
+<input id="searchInput" type="text" placeholder="輸入點名，例如 FH114004" onkeydown="if(event.key===&quot;Enter&quot; || event.keyCode===13){event.preventDefault();doSearch();}">
 </div>
 <button onclick="doSearch()">搜尋並定位</button>
 <button class="teal" onclick="locateUser()">📍 單次定位</button>
@@ -473,6 +473,22 @@ style="display:block;text-align:center;padding:10px;border-radius:8px;background
 <div id="liveLocateStatus" class="live-locate-status">即時定位尚未啟動。</div>
 </div>
 <div id="searchResults" class="result-list" style="display:none"></div>
+
+<h2>點位圖徵顯示比例尺</h2>
+<div class="small">
+點位會依目前比例尺自動顯示、隱藏並調整大小。預設：1:10,000 以內顯示；越放大點位越大。
+</div>
+<div class="row">
+<div class="field">
+<label>較小比例尺分母</label>
+<input id="pointScaleMax" type="number" min="1" step="100" value="10000">
+</div>
+<div class="field">
+<label>較大比例尺分母</label>
+<input id="pointScaleMin" type="number" min="1" step="100" value="200">
+</div>
+</div>
+<button class="secondary" onclick="updatePointMarkers()">套用點位比例尺</button>
 
 <h2>點名顯示比例尺</h2>
 <div class="small">目前比例尺介於以下範圍時顯示點名。</div>
@@ -675,9 +691,10 @@ function initMap(){
   labelLayer = L.layerGroup().addTo(map);
   sectionLabelLayer = L.layerGroup().addTo(map);
 
-  map.on("zoomend",function(){updateLabels();});
-  map.on("moveend",function(){updateLabels();});
+  map.on("zoomend",function(){updatePointMarkers();updateLabels();});
+  map.on("moveend",function(){updatePointMarkers();updateLabels();});
 
+  updatePointMarkers();
   updateScaleDisplay();
 }
 
@@ -2048,16 +2065,7 @@ function applyFilters(){
   labelLayer.clearLayers();
   sectionLabelLayer.clearLayers();
 
-  for(i=0;i<pointEntries.length;i++){
-    e=pointEntries[i];
-    show=isPointVisible(e.record);
-
-    if(show){
-      if(!map.hasLayer(e.marker)) e.marker.addTo(map);
-    }else{
-      if(map.hasLayer(e.marker)) map.removeLayer(e.marker);
-    }
-  }
+  updatePointMarkers();
 
   for(i=0;i<polygonEntries.length;i++){
     e=polygonEntries[i];
@@ -2081,6 +2089,58 @@ function applyFilters(){
   }
 
   updateLabels();
+}
+
+
+function getPointMarkerRadius(scaleDenominator){
+  var s=Number(scaleDenominator)||99999999;
+
+  // 越接近（比例尺分母越小），點位越大。
+  if(s<=1000) return 8;
+  if(s<=3000) return 6;
+  if(s<=5000) return 5;
+  if(s<=10000) return 3;
+  return 2;
+}
+
+function updatePointMarkers(){
+  if(!map) return;
+
+  var current=getCurrentScaleDenominator();
+
+  var minEl=$("pointScaleMin");
+  var maxEl=$("pointScaleMax");
+
+  var minValue=minEl ? Number(minEl.value) : 200;
+  var maxValue=maxEl ? Number(maxEl.value) : 10000;
+
+  if(!isFinite(minValue) || minValue<=0) minValue=200;
+  if(!isFinite(maxValue) || maxValue<=0) maxValue=10000;
+
+  var low=Math.min(minValue,maxValue);
+  var high=Math.max(minValue,maxValue);
+  var withinScale=(current>=low && current<=high);
+  var radius=getPointMarkerRadius(current);
+
+  for(var i=0;i<pointEntries.length;i++){
+    var e=pointEntries[i];
+    var filterVisible=isPointVisible(e.record);
+    var show=filterVisible && withinScale;
+
+    if(show){
+      if(!map.hasLayer(e.marker)){
+        e.marker.addTo(map);
+      }
+
+      if(e.marker && typeof e.marker.setRadius==="function"){
+        e.marker.setRadius(radius);
+      }
+    }else{
+      if(map.hasLayer(e.marker)){
+        map.removeLayer(e.marker);
+      }
+    }
+  }
 }
 
 function getCurrentScaleDenominator(){
@@ -2108,8 +2168,12 @@ function updateLabels(){
   sectionLabelLayer.clearLayers();
 
   var current=getCurrentScaleDenominator();
-  var low=Math.min(Number($("labelScaleMin").value)||500,Number($("labelScaleMax").value)||5000);
-  var high=Math.max(Number($("labelScaleMin").value)||500,Number($("labelScaleMax").value)||5000);
+  var labelMinEl=$("labelScaleMin");
+  var labelMaxEl=$("labelScaleMax");
+  var labelMin=labelMinEl ? Number(labelMinEl.value) : 500;
+  var labelMax=labelMaxEl ? Number(labelMaxEl.value) : 5000;
+  var low=Math.min(labelMin||500,labelMax||5000);
+  var high=Math.max(labelMin||500,labelMax||5000);
   var i;
 
   if(current>=low && current<=high){
@@ -2175,55 +2239,133 @@ function clearAllFilters(){
   applyFilters();
 }
 
-function doSearch(){
-  var q=String($("searchInput").value||"").toLowerCase();
-  var box=$("searchResults");
-  box.innerHTML="";
+function normalizeSearchText(value){
+  return String(value == null ? "" : value)
+    .replace(/^\s+|\s+$/g,"")
+    .replace(/\s+/g,"")
+    .toUpperCase();
+}
 
-  if(!q){
-    box.style.display="none";
+function activateSearchResult(entry){
+  if(!entry || !entry.record) return;
+
+  var r=entry.record;
+  var y=String(r.year||"未註明");
+  var s=String(r.section||"未分類");
+
+  selectedSections[y+"||"+s]=true;
+  selectedYears[y]=true;
+
+  syncChecks();
+  applyFilters();
+
+  var lat=Number(r.lat);
+  var lon=Number(r.lon);
+
+  if(isFinite(lat) && isFinite(lon)){
+    map.setView([lat,lon],18);
+  }
+
+  if(isMobileInfoMode()){
+    openMobileInfoPanel(r);
+  }else{
+    if(entry.marker && map.hasLayer(entry.marker)){
+      entry.marker.openPopup();
+    }
+  }
+
+  setStatus("已定位："+String(r.name||""));
+}
+
+function doSearch(){
+  var input=$("searchInput");
+  var box=$("searchResults");
+
+  if(!input || !box){
+    alert("搜尋元件載入失敗。");
     return;
   }
 
-  var hits=[],i;
+  var raw=String(input.value||"");
+  var q=normalizeSearchText(raw);
+
+  box.innerHTML="";
+  box.style.display="none";
+
+  if(!q){
+    setStatus("請輸入點名。");
+    input.focus();
+    return;
+  }
+
+  var exact=[];
+  var partial=[];
+  var i,e,r,name,attrPoint;
 
   for(i=0;i<pointEntries.length;i++){
-    if(String(pointEntries[i].record.name).toLowerCase().indexOf(q)>=0){
-      hits.push(pointEntries[i]);
+    e=pointEntries[i];
+    r=e.record||{};
+
+    name=normalizeSearchText(r.name||"");
+    attrPoint=normalizeSearchText(
+      r.attrs && typeof r.attrs["點名"]!=="undefined"
+        ? r.attrs["點名"]
+        : ""
+    );
+
+    if(name===q || attrPoint===q){
+      exact.push(e);
+    }else if(
+      name.indexOf(q)>=0 ||
+      attrPoint.indexOf(q)>=0
+    ){
+      partial.push(e);
     }
+  }
+
+  if(exact.length===1){
+    activateSearchResult(exact[0]);
+    return;
+  }
+
+  var hits=exact.length ? exact : partial;
+
+  if(!hits.length){
+    box.style.display="block";
+    box.innerHTML='<div class="result-item">查無點名：'+escapeHtml(raw)+'</div>';
+    setStatus("查無點名："+raw);
+    return;
+  }
+
+  if(hits.length===1){
+    activateSearchResult(hits[0]);
+    return;
   }
 
   box.style.display="block";
 
-  if(!hits.length){
-    box.innerHTML='<div class="result-item">查無資料</div>';
-    return;
-  }
-
   for(i=0;i<hits.length && i<100;i++){
-    (function(e){
+    (function(entry){
+      var r=entry.record||{};
       var d=document.createElement("div");
       d.className="result-item";
-      d.innerHTML=escapeHtml(e.record.name+"｜"+e.record.section+"｜"+e.record.year);
+      d.innerHTML=escapeHtml(
+        String(r.name||"")+
+        "｜"+String(r.section||"")+
+        "｜"+String(r.year||"")
+      );
 
       d.onclick=function(){
-        selectedSections[String(e.record.year||"未註明")+"||"+String(e.record.section||"未分類")]=true;
-        selectedYears[String(e.record.year||"未註明")]=true;
-        syncChecks();
-        applyFilters();
-        map.setView([e.record.lat,e.record.lon],18);
-        if(isMobileInfoMode()){
-          openMobileInfoPanel(e.record);
-        }else{
-          e.marker.openPopup();
-        }
+        activateSearchResult(entry);
+        box.style.display="none";
       };
 
       box.appendChild(d);
     })(hits[i]);
   }
-}
 
+  setStatus("找到 "+hits.length+" 筆符合資料，請選擇一筆。");
+}
 function locateUser(){
   if(!navigator.geolocation){
     alert("此瀏覽器不支援定位功能。");
