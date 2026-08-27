@@ -534,6 +534,7 @@ var EMBEDDED_DATA = null;
 var USER_MODE = false;
 var ORS_API_KEY = "YOUR_ORS_API_KEY";
 var ORS_API_BASE = "https://api.heigit.org/v2/directions";
+var ORS_API_FALLBACK = "https://api.openrouteservice.org/v2/directions";
 
 var navActive = false;
 var navProfile = null;
@@ -1356,9 +1357,8 @@ function requestNavigationRoute(startLat,startLon,fitRoute){
   if(!key) return;
 
   navRequestInFlight=true;
-  if($("navMessage")) $("navMessage").innerHTML="正在向 openrouteservice 計算路線…";
+  if($("navMessage")) $("navMessage").innerHTML="正在計算路線…";
 
-  var url=ORS_API_BASE+"/"+encodeURIComponent(navProfile)+"/geojson";
   var body={
     coordinates:[
       [Number(startLon),Number(startLat)],
@@ -1367,25 +1367,31 @@ function requestNavigationRoute(startLat,startLon,fitRoute){
     instructions:true
   };
 
-  fetch(url,{
-    method:"POST",
-    headers:{
-      "Authorization":key,
-      "Content-Type":"application/json",
-      "Accept":"application/geo+json,application/json"
-    },
-    body:JSON.stringify(body)
-  })
-  .then(function(resp){
-    if(!resp.ok){
-      return resp.text().then(function(t){
-        throw new Error("ORS "+resp.status+"："+(t||resp.statusText));
-      });
-    }
-    return resp.json();
-  })
-  .then(function(data){
+  function doFetch(baseUrl){
+    var url=baseUrl+"/"+encodeURIComponent(navProfile)+"/geojson";
+
+    return fetch(url,{
+      method:"POST",
+      mode:"cors",
+      headers:{
+        "Authorization":key,
+        "Content-Type":"application/json",
+        "Accept":"application/geo+json,application/json"
+      },
+      body:JSON.stringify(body)
+    }).then(function(resp){
+      if(!resp.ok){
+        return resp.text().then(function(t){
+          throw new Error("ORS "+resp.status+"："+(t||resp.statusText));
+        });
+      }
+      return resp.json();
+    });
+  }
+
+  function handleRouteData(data){
     if(!navActive) return;
+
     if(!data || !data.features || !data.features.length){
       throw new Error("ORS 未回傳可用路線。");
     }
@@ -1407,7 +1413,9 @@ function requestNavigationRoute(startLat,startLon,fitRoute){
     var segments=props.segments||[];
     for(var s=0;s<segments.length;s++){
       var steps=segments[s].steps||[];
-      for(var j=0;j<steps.length;j++) navRouteSteps.push(steps[j]);
+      for(var j=0;j<steps.length;j++){
+        navRouteSteps.push(steps[j]);
+      }
     }
 
     navLastNearestIndex=0;
@@ -1424,25 +1432,62 @@ function requestNavigationRoute(startLat,startLon,fitRoute){
     }).addTo(map);
 
     if(fitRoute && navRouteLayer.getBounds && navRouteLayer.getBounds().isValid()){
-      map.fitBounds(navRouteLayer.getBounds(),{padding:[45,45],maxZoom:18});
+      map.fitBounds(navRouteLayer.getBounds(),{
+        padding:[45,45],
+        maxZoom:18
+      });
     }
 
     if($("navMessage")){
-      $("navMessage").innerHTML="路線規劃完成｜"+escapeHtml(profileLabel(navProfile))+"模式";
+      $("navMessage").innerHTML=
+        "路線規劃完成｜"+
+        escapeHtml(profileLabel(navProfile))+
+        "模式";
     }
 
     updateNavigationProgress(startLat,startLon);
-  })
-  .catch(function(err){
-    console.error(err);
-    if($("navInstruction")) $("navInstruction").innerHTML="路線規劃失敗";
-    if($("navMessage")) $("navMessage").innerHTML=escapeHtml(err.message||String(err));
-  })
-  .then(function(){
-    navRequestInFlight=false;
-  });
-}
+  }
 
+  // 先嘗試新 HeiGIT API。
+  // 若瀏覽器因 CORS / network error 造成 TypeError: Failed to fetch，
+  // 自動改用仍可相容瀏覽器前端的舊 openrouteservice 網域。
+  doFetch(ORS_API_BASE)
+    .catch(function(err){
+      var message=String(err && err.message ? err.message : err);
+
+      if($("navMessage")){
+        $("navMessage").innerHTML=
+          "新 API 無法由瀏覽器直接存取，正在改用相容端點…";
+      }
+
+      console.warn("HeiGIT API 前端請求失敗，改用 fallback：",message);
+
+      return doFetch(ORS_API_FALLBACK);
+    })
+    .then(handleRouteData)
+    .catch(function(err){
+      console.error(err);
+
+      if($("navInstruction")){
+        $("navInstruction").innerHTML="路線規劃失敗";
+      }
+
+      var msg=err && err.message ? err.message : String(err);
+
+      if(msg==="Failed to fetch" || /Failed to fetch/i.test(msg)){
+        msg=
+          "瀏覽器無法直接連線 ORS API。"+
+          "這通常是 CORS 限制；正式公開版建議改用 Cloudflare Worker Proxy。";
+      }
+
+      if($("navMessage")){
+        $("navMessage").innerHTML=escapeHtml(msg);
+      }
+    })
+    .then(function(){
+      navRequestInFlight=false;
+    });
+}
 function findNearestRouteIndex(lat,lon){
   if(!navRouteCoords.length) return {index:0,distance:Infinity};
 
