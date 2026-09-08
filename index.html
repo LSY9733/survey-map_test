@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>KML 網頁地圖－手機效能最佳化・獨立測距與方位追蹤版</title>
+<title>KML 網頁地圖－地圖點選測距・方位追蹤版</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
@@ -663,6 +663,102 @@ body.user-mode #adminBlock{display:none!important}
   }
 }
 
+
+/* ===== 地圖直接點選測距 ===== */
+.measure-pick-help{
+  margin-bottom:8px;
+  padding:8px 9px;
+  border-radius:8px;
+  background:#fff7ed;
+  color:#9a3412;
+  font-size:12px;
+  line-height:1.55;
+}
+.measure-pick-row{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  margin-bottom:8px;
+}
+.measure-pick-row button{margin:0}
+.measure-pick-row button.active-pick{
+  outline:3px solid rgba(37,99,235,.25);
+  background:#2563eb;
+}
+.measure-selected-points{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:7px;
+  margin-bottom:8px;
+}
+.measure-selected-card{
+  padding:7px 8px;
+  border:1px solid #dbe3ec;
+  border-radius:8px;
+  background:#fff;
+  font-size:12px;
+  line-height:1.45;
+  min-width:0;
+}
+.measure-selected-card b{display:block;margin-bottom:2px}
+.measure-selected-name{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.measure-map-pick-banner{
+  position:fixed;
+  left:50%;
+  top:58px;
+  transform:translateX(-50%);
+  z-index:5300;
+  display:none;
+  width:min(88vw,360px);
+  padding:9px 12px;
+  border-radius:999px;
+  background:rgba(15,118,110,.96);
+  color:#fff;
+  font-size:13px;
+  font-weight:800;
+  text-align:center;
+  box-shadow:0 4px 16px rgba(0,0,0,.28);
+  pointer-events:none;
+}
+.measure-map-pick-banner.open{display:block}
+
+
+.measure-endpoints{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  margin-top:8px;
+}
+.measure-endpoint-card{
+  padding:8px;
+  border:1px solid #dbe3ec;
+  border-radius:8px;
+  background:#fff;
+  min-width:0;
+}
+.measure-endpoint-label{
+  font-size:12px;
+  color:#64748b;
+  margin-bottom:3px;
+}
+.measure-endpoint-name{
+  font-size:14px;
+  font-weight:800;
+  color:#0f172a;
+  overflow-wrap:anywhere;
+}
+.measure-endpoint-meta{
+  margin-top:3px;
+  font-size:12px;
+  color:#475569;
+  line-height:1.45;
+  overflow-wrap:anywhere;
+}
+
 </style>
 </head>
 
@@ -821,7 +917,26 @@ style="display:block;text-align:center;padding:10px;border-radius:8px;background
     <div id="surveyPaneMeasure" class="survey-float-pane active">
       <div class="survey-float-title">圖根點測距</div>
       <div class="measure-panel">
-        <div id="measureStatus" class="measure-status">尚未設定測距起點。</div>
+        <div class="measure-pick-help">
+          直接由此處選擇起點、終點。按下按鈕後，再到地圖上直接點選圖根點。
+        </div>
+        <div class="measure-pick-row">
+          <button id="pickMeasureStartBtn" type="button" class="secondary" onclick="beginMeasurePick('start')">① 選擇起點</button>
+          <button id="pickMeasureEndBtn" type="button" class="teal" onclick="beginMeasurePick('end')" disabled>② 選擇終點</button>
+        </div>
+        <div class="measure-selected-points">
+          <div class="measure-selected-card">
+            <b>起點</b>
+            <div id="measureStartName" class="measure-selected-name">尚未選擇</div>
+            <div id="measureStartMeta" class="measure-endpoint-meta"></div>
+          </div>
+          <div class="measure-selected-card">
+            <b>終點</b>
+            <div id="measureEndName" class="measure-selected-name">尚未選擇</div>
+            <div id="measureEndMeta" class="measure-endpoint-meta"></div>
+          </div>
+        </div>
+        <div id="measureStatus" class="measure-status">請先按「選擇起點」。</div>
         <div id="measureResult" class="measure-result" style="display:none"></div>
         <div class="row" style="margin-top:6px">
           <button class="secondary" onclick="clearMeasure()">清除測距</button>
@@ -855,6 +970,8 @@ style="display:block;text-align:center;padding:10px;border-radius:8px;background
     </div>
   </div>
 </div>
+
+<div id="measureMapPickBanner" class="measure-map-pick-banner">請點選圖根點</div>
 
 <div id="map"></div>
 
@@ -907,6 +1024,9 @@ var lastLiveLon = null;
 var measureStartRecord = null;
 var measureEndRecord = null;
 var measureLayer = null;
+var measureStartMarker = null;
+var measureEndMarker = null;
+var measurePickMode = null;
 
 var trackedRecord = null;
 var trackLayer = null;
@@ -991,6 +1111,12 @@ function openSurveyPanel(tab){
 
   if(launcher){
     launcher.style.display="none";
+    launcher.innerHTML="📐 測距／追蹤";
+  }
+
+  if(tab==="measure"){
+    measurePickMode=null;
+    updateMeasurePickControls();
   }
 
   // 手機上啟動測距/追蹤後，自動收起左側選單，
@@ -1012,6 +1138,9 @@ function closeSurveyPanel(){
 
   if(launcher){
     launcher.style.display="block";
+    if(!measurePickMode){
+      launcher.innerHTML="📐 測距／追蹤";
+    }
   }
 }
 
@@ -1144,6 +1273,7 @@ function initMap(){
   // 某些手機在控制項剛建立時尚未完成 layout，再補一次。
   setTimeout(updateScaleDisplay,80);
   setTimeout(updateSurveyLauncherVisibility,100);
+  setTimeout(updateMeasurePickControls,120);
 }
 
 function onFilesSelected(){
@@ -2115,26 +2245,14 @@ function surveyPointButtonsHtml(r){
   var id=escapeHtml(recordIdentity(r));
 
   return ''+
-    '<div class="survey-actions">'+
-      '<button type="button" class="secondary" data-record-id="'+id+'" onclick="setMeasureStartFromButton(this)">📏 設為測距起點</button>'+
-      '<button type="button" class="teal" data-record-id="'+id+'" onclick="measureToPointFromButton(this)">📐 測量至此點</button>'+
-      '<button type="button" class="secondary" style="grid-column:1 / -1" data-record-id="'+id+'" onclick="startTrackPointFromButton(this)">🎯 追蹤此圖根點</button>'+
+    '<div class="survey-actions" style="grid-template-columns:1fr">'+
+      '<button type="button" class="secondary" data-record-id="'+id+'" onclick="startTrackPointFromButton(this)">🎯 追蹤此圖根點</button>'+
     '</div>';
 }
 
 function getRecordFromActionButton(btn){
   if(!btn) return null;
   return findRecordByIdentity(btn.getAttribute("data-record-id")||"");
-}
-
-function setMeasureStartFromButton(btn){
-  var r=getRecordFromActionButton(btn);
-  if(r) setMeasureStart(r);
-}
-
-function measureToPointFromButton(btn){
-  var r=getRecordFromActionButton(btn);
-  if(r) measureToPoint(r);
 }
 
 function startTrackPointFromButton(btn){
@@ -2216,9 +2334,126 @@ function formatSurveyDistance(m){
   return (m/1000).toFixed(3)+" km";
 }
 
+function updateMeasurePickControls(){
+  var startBtn=$("pickMeasureStartBtn");
+  var endBtn=$("pickMeasureEndBtn");
+  var banner=$("measureMapPickBanner");
+  var launcher=$("surveyFloatLauncher");
+
+  if(startBtn){
+    startBtn.classList.toggle("active-pick",measurePickMode==="start");
+  }
+
+  if(endBtn){
+    endBtn.disabled=!measureStartRecord;
+    endBtn.classList.toggle("active-pick",measurePickMode==="end");
+  }
+
+  if(banner){
+    if(measurePickMode==="start"){
+      banner.innerHTML="📍 請直接點選地圖上的測距起點";
+      banner.classList.add("open");
+    }else if(measurePickMode==="end"){
+      banner.innerHTML="📍 請直接點選地圖上的測距終點";
+      banner.classList.add("open");
+    }else{
+      banner.classList.remove("open");
+    }
+  }
+
+  if(launcher && measurePickMode){
+    launcher.style.display="block";
+    launcher.innerHTML=measurePickMode==="start" ?
+      "📍 點選測距起點" : "📍 點選測距終點";
+  }else if(launcher){
+    launcher.innerHTML="📐 測距／追蹤";
+  }
+}
+
+function beginMeasurePick(mode){
+  if(mode!=="start" && mode!=="end") return;
+
+  if(mode==="end" && !measureStartRecord){
+    alert("請先選擇測距起點。");
+    mode="start";
+  }
+
+  measurePickMode=mode;
+
+  if(map) map.closePopup();
+  closeMobileInfoPanel();
+
+  var panel=$("surveyFloatPanel");
+  if(panel){
+    panel.classList.remove("open");
+    panel.setAttribute("aria-hidden","true");
+  }
+
+  updateMeasurePickControls();
+  setStatus(mode==="start" ?
+    "測距選點模式：請直接點選地圖上的起點圖根點。" :
+    "測距選點模式：請直接點選地圖上的終點圖根點。");
+}
+
+function cancelMeasurePick(){
+  measurePickMode=null;
+  updateMeasurePickControls();
+}
+
+function handleMeasurePointPick(r){
+  if(!measurePickMode || !r) return false;
+
+  var mode=measurePickMode;
+  measurePickMode=null;
+
+  if(mode==="start"){
+    setMeasureStart(r);
+  }else{
+    measureToPoint(r);
+  }
+
+  updateMeasurePickControls();
+  return true;
+}
+
+function updateMeasureSelectionMarkers(){
+  if(!map) return;
+
+  if(measureStartRecord){
+    if(!measureStartMarker){
+      measureStartMarker=L.circleMarker(
+        [Number(measureStartRecord.lat),Number(measureStartRecord.lon)],
+        {radius:12,weight:4,color:"#16a34a",fill:false,interactive:false}
+      ).addTo(map);
+    }else{
+      measureStartMarker.setLatLng([Number(measureStartRecord.lat),Number(measureStartRecord.lon)]);
+      if(!map.hasLayer(measureStartMarker)) measureStartMarker.addTo(map);
+    }
+  }else if(measureStartMarker){
+    if(map.hasLayer(measureStartMarker)) map.removeLayer(measureStartMarker);
+    measureStartMarker=null;
+  }
+
+  if(measureEndRecord){
+    if(!measureEndMarker){
+      measureEndMarker=L.circleMarker(
+        [Number(measureEndRecord.lat),Number(measureEndRecord.lon)],
+        {radius:12,weight:4,color:"#dc2626",fill:false,interactive:false}
+      ).addTo(map);
+    }else{
+      measureEndMarker.setLatLng([Number(measureEndRecord.lat),Number(measureEndRecord.lon)]);
+      if(!map.hasLayer(measureEndMarker)) measureEndMarker.addTo(map);
+    }
+  }else if(measureEndMarker){
+    if(map.hasLayer(measureEndMarker)) map.removeLayer(measureEndMarker);
+    measureEndMarker=null;
+  }
+}
+
 function setMeasureStart(r){
   openSurveyPanel("measure");
   measureStartRecord=r;
+  updateMeasureEndpointDisplay();
   measureEndRecord=null;
 
   if(measureLayer&&map&&map.hasLayer(measureLayer)){
@@ -2226,37 +2461,40 @@ function setMeasureStart(r){
   }
   measureLayer=null;
 
+  updateMeasureEndpointDisplay();
+
   if($("measureStatus")){
     $("measureStatus").innerHTML=
-      "起點：<b>"+escapeHtml(r.name)+"</b>"+
-      " ["+escapeHtml(r.year)+"年度]"+
-      "（"+escapeHtml(r.section)+"）";
+      "起點已選定：<b>"+escapeHtml(r.name)+"</b>。請按「② 選擇終點」，再直接點地圖上的圖根點。";
   }
+
   if($("measureResult")){
     $("measureResult").style.display="none";
     $("measureResult").innerHTML="";
   }
 
-  setStatus("已設定測距起點："+r.name+"。請開啟另一個圖根點並按「測量至此點」。");
-  closeMobileInfoPanel();
-  if(map) map.closePopup();
+  updateMeasureSelectionMarkers();
+  updateMeasurePickControls();
+  setStatus("已設定測距起點："+r.name+"。請由浮動面板選擇終點。");
 }
 
 function measureToPoint(r){
   openSurveyPanel("measure");
 
   if(!measureStartRecord){
-    setMeasureStart(r);
-    alert("已將「"+r.name+"」設為測距起點。請再選另一個圖根點。");
+    alert("請先由浮動測距面板選擇起點。");
+    beginMeasurePick("start");
     return;
   }
 
   if(recordIdentity(measureStartRecord)===recordIdentity(r)){
-    alert("起點與終點不能是同一個圖根點。");
+    alert("起點與終點不能是同一個圖根點，請重新選擇終點。");
+    beginMeasurePick("end");
     return;
   }
 
   measureEndRecord=r;
+  updateMeasureEndpointDisplay();
   var d=precisePointDistance(measureStartRecord,r);
 
   if(measureLayer&&map&&map.hasLayer(measureLayer)){
@@ -2280,6 +2518,8 @@ function measureToPoint(r){
     warning+='</span>';
   }
 
+  updateMeasureEndpointDisplay();
+
   if($("measureStatus")){
     $("measureStatus").innerHTML=
       "起點：<b>"+escapeHtml(measureStartRecord.name)+"</b><br>"+
@@ -2294,24 +2534,75 @@ function measureToPoint(r){
       warning;
   }
 
+  updateMeasureSelectionMarkers();
+  updateMeasurePickControls();
   fitMeasureLine();
-  closeMobileInfoPanel();
-  if(map) map.closePopup();
+}
+
+
+function updateMeasureEndpointDisplay(){
+  var sName=$("measureStartName");
+  var sMeta=$("measureStartMeta");
+  var eName=$("measureEndName");
+  var eMeta=$("measureEndMeta");
+
+  if(sName){
+    sName.innerHTML=measureStartRecord ? escapeHtml(measureStartRecord.name) : "尚未選擇";
+  }
+  if(sMeta){
+    if(measureStartRecord){
+      var ss=String(measureStartRecord.section||"未分類");
+      if(ss.slice(-1)!=="段") ss+="段";
+      sMeta.innerHTML="["+escapeHtml(measureStartRecord.year)+"年度] ["+escapeHtml(ss)+"]";
+    }else{
+      sMeta.innerHTML="";
+    }
+  }
+
+  if(eName){
+    eName.innerHTML=measureEndRecord ? escapeHtml(measureEndRecord.name) : "尚未選擇";
+  }
+  if(eMeta){
+    if(measureEndRecord){
+      var es=String(measureEndRecord.section||"未分類");
+      if(es.slice(-1)!=="段") es+="段";
+      eMeta.innerHTML="["+escapeHtml(measureEndRecord.year)+"年度] ["+escapeHtml(es)+"]";
+    }else{
+      eMeta.innerHTML="";
+    }
+  }
 }
 
 function clearMeasure(){
+  measurePickMode=null;
   measureStartRecord=null;
   measureEndRecord=null;
+  updateMeasureEndpointDisplay();
+
   if(measureLayer&&map&&map.hasLayer(measureLayer)){
     map.removeLayer(measureLayer);
   }
   measureLayer=null;
 
-  if($("measureStatus")) $("measureStatus").innerHTML="尚未設定測距起點。";
+  if(measureStartMarker&&map&&map.hasLayer(measureStartMarker)){
+    map.removeLayer(measureStartMarker);
+  }
+  measureStartMarker=null;
+
+  if(measureEndMarker&&map&&map.hasLayer(measureEndMarker)){
+    map.removeLayer(measureEndMarker);
+  }
+  measureEndMarker=null;
+
+  updateMeasureEndpointDisplay();
+  if($("measureStatus")) $("measureStatus").innerHTML="請先按「選擇起點」。";
+
   if($("measureResult")){
     $("measureResult").style.display="none";
     $("measureResult").innerHTML="";
   }
+
+  updateMeasurePickControls();
 }
 
 function fitMeasureLine(){
@@ -2928,6 +3219,13 @@ function buildMap(){
 
       if(isMobileInfoMode()){
         marker.on("click",function(){
+          // 測距選點模式優先：直接將此圖根點設為起點/終點，
+          // 不開啟點位資料面板。
+          if(handleMeasurePointPick(r)){
+            if(marker.bringToFront) marker.bringToFront();
+            return;
+          }
+
           openMobileInfoPanel(r);
           if(marker.bringToFront) marker.bringToFront();
         });
@@ -2936,6 +3234,22 @@ function buildMap(){
           maxWidth:420,
           autoPan:true,
           keepInView:true
+        });
+
+        // 移除 bindPopup 預設的 click 開啟行為，
+        // 改由下方自訂 click 判斷是否正在測距選點。
+        if(marker._openPopup){
+          marker.off("click",marker._openPopup,marker);
+        }
+
+        marker.on("click",function(){
+          if(handleMeasurePointPick(r)){
+            if(map) map.closePopup();
+            if(marker.bringToFront) marker.bringToFront();
+            return;
+          }
+
+          marker.openPopup();
         });
 
         marker.on("popupopen",function(){
