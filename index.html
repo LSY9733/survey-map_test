@@ -6,6 +6,7 @@
 <title>KML 網頁地圖－地圖點選測距・方位追蹤版</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/@tomickigrzegorz/leaflet-rotate/dist/leaflet-rotate.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
 
 <style>
@@ -779,6 +780,36 @@ body.user-mode #adminBlock{display:none!important}
   line-height:1.75;
 }
 
+
+/* ===== 地圖旋轉 / 手機方向朝上 ===== */
+.rotate-float-launcher{
+  position:absolute;left:12px;bottom:142px;z-index:4550;
+  width:auto;min-width:116px;padding:10px 13px;border-radius:999px;
+  background:#7c3aed;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.28);
+  display:none;
+}
+.rotate-float-panel{
+  position:absolute;left:12px;bottom:136px;z-index:4550;
+  width:min(92vw,340px);display:none;overflow:hidden;
+  border:1px solid #cbd5e1;border-radius:14px;background:rgba(255,255,255,.98);
+  box-shadow:0 8px 28px rgba(0,0,0,.30);
+}
+.rotate-float-panel.open{display:block}
+.rotate-float-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:#f8fafc;border-bottom:1px solid #e2e8f0}
+.rotate-float-title{font-weight:800;font-size:15px}
+.rotate-float-close{width:36px!important;height:36px;min-width:36px;margin:0!important;padding:0!important;border-radius:50%;background:#e2e8f0!important;color:#334155!important;font-size:22px;font-weight:400}
+.rotate-float-body{padding:10px}
+.rotate-mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.rotate-mode-grid button{margin:0}
+.rotate-status{margin-top:9px;padding:8px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;font-size:12px;line-height:1.5;color:#475569}
+.rotate-on{background:#7c3aed!important}
+@media(max-width:700px){
+  .rotate-float-panel{position:fixed;left:8px;right:8px;bottom:calc(12px + env(safe-area-inset-bottom));width:auto;z-index:5160}
+  .rotate-float-launcher{position:fixed;left:10px;bottom:calc(66px + env(safe-area-inset-bottom));z-index:5150}
+  body.mobile-sheet-open .rotate-float-panel,
+  body.mobile-sheet-open .rotate-float-launcher{display:none!important}
+}
+
 </style>
 </head>
 
@@ -1012,10 +1043,32 @@ style="display:block;text-align:center;padding:10px;border-radius:8px;background
 
 <div id="measureMapPickBanner" class="measure-map-pick-banner">請點選圖根點</div>
 
+
+<!-- ===== 獨立浮動：地圖旋轉 ===== -->
+<button id="rotateFloatLauncher" class="rotate-float-launcher" type="button"
+        onclick="openRotatePanel()">🧭 地圖方向</button>
+
+<div id="rotateFloatPanel" class="rotate-float-panel" aria-hidden="true">
+  <div class="rotate-float-head">
+    <div class="rotate-float-title">🧭 地圖方向</div>
+    <button type="button" class="rotate-float-close" onclick="closeRotatePanel()" aria-label="縮小">×</button>
+  </div>
+  <div class="rotate-float-body">
+    <div class="rotate-mode-grid">
+      <button id="northUpBtn" class="rotate-on" onclick="setNorthUp()">⬆ 北方朝上</button>
+      <button id="headingUpBtn" class="secondary" onclick="toggleHeadingUp()">📱 手機方向朝上</button>
+    </div>
+    <button class="teal" onclick="resetMapNorth()" style="margin-top:8px">↻ 一鍵回正北</button>
+    <div id="rotateStatus" class="rotate-status">目前模式：北方朝上｜地圖角度 0°</div>
+  </div>
+</div>
+
 <div id="map"></div>
 
 
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@tomickigrzegorz/leaflet-rotate/dist/leaflet-rotate.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
 
 <script>
@@ -1082,6 +1135,11 @@ var followPanIntervalMs = 800;
 var lastTrackUiAt = 0;
 var trackUiIntervalMs = 150;
 
+/* ===== 地圖旋轉狀態 ===== */
+var mapHeadingUpEnabled = false;
+var lastAppliedMapHeading = null;
+var mapRotateAvailable = false;
+
 
 function $(id){
   return document.getElementById(id);
@@ -1137,6 +1195,119 @@ function updateLocateLauncherVisibility(){
   var launcher=$("locateFloatLauncher"), panel=$("locateFloatPanel");
   if(!launcher) return;
   launcher.style.display=(panel&&panel.classList.contains("open"))?"none":"block";
+}
+
+
+function openRotatePanel(){
+  var panel=$("rotateFloatPanel");
+  var launcher=$("rotateFloatLauncher");
+  if(panel){panel.classList.add("open");panel.setAttribute("aria-hidden","false");}
+  if(launcher) launcher.style.display="none";
+  if(window.innerWidth<=820){
+    var sidebar=$("sidebar");
+    if(sidebar) sidebar.classList.remove("open");
+  }
+  updateRotateStatus();
+}
+
+function closeRotatePanel(){
+  var panel=$("rotateFloatPanel");
+  var launcher=$("rotateFloatLauncher");
+  if(panel){panel.classList.remove("open");panel.setAttribute("aria-hidden","true");}
+  if(launcher) launcher.style.display="block";
+}
+
+function updateRotateLauncherVisibility(){
+  var launcher=$("rotateFloatLauncher");
+  var panel=$("rotateFloatPanel");
+  if(!launcher) return;
+  launcher.style.display=(panel&&panel.classList.contains("open")) ? "none" : "block";
+}
+
+function getMapBearingSafe(){
+  if(!map) return 0;
+  try{
+    if(typeof map.getBearing==="function"){
+      var b=Number(map.getBearing());
+      return isFinite(b) ? ((b%360)+360)%360 : 0;
+    }
+  }catch(e){}
+  return 0;
+}
+
+function updateRotateStatus(){
+  var el=$("rotateStatus");
+  if(!el) return;
+  if(!mapRotateAvailable){
+    el.innerHTML="旋轉模組尚未載入；目前維持北方朝上。";
+    return;
+  }
+  var b=getMapBearingSafe();
+  var mode=mapHeadingUpEnabled ? "手機方向朝上" : "北方朝上／自由旋轉";
+  el.innerHTML="目前模式：<b>"+escapeHtml(mode)+"</b>｜地圖角度 <b>"+b.toFixed(1)+"°</b>";
+}
+
+function setNorthUp(){
+  mapHeadingUpEnabled=false;
+  if(map&&typeof map.stopHeadingUp==="function"){try{map.stopHeadingUp();}catch(e){}}
+  if(map&&typeof map.setBearing==="function"){try{map.setBearing(0);}catch(e){}}
+  lastAppliedMapHeading=null;
+  if($("headingUpBtn")) $("headingUpBtn").className="secondary";
+  if($("northUpBtn")) $("northUpBtn").className="rotate-on";
+  updateRotateStatus();
+}
+
+function resetMapNorth(){
+  setNorthUp();
+  if(map){try{map.invalidateSize(false);}catch(e){}}
+}
+
+function toggleHeadingUp(){
+  if(!mapRotateAvailable){
+    alert("地圖旋轉模組尚未載入，請確認網路連線後重新開啟頁面。");
+    return;
+  }
+
+  if(!headingEnabled){
+    enableHeading();
+  }
+
+  mapHeadingUpEnabled=!mapHeadingUpEnabled;
+
+  if(mapHeadingUpEnabled){
+    if($("headingUpBtn")) $("headingUpBtn").className="rotate-on";
+    if($("northUpBtn")) $("northUpBtn").className="secondary";
+    applyMapHeadingFromPhone(true);
+  }else{
+    if(map&&typeof map.stopHeadingUp==="function"){try{map.stopHeadingUp();}catch(e){}}
+    if($("headingUpBtn")) $("headingUpBtn").className="secondary";
+    updateRotateStatus();
+  }
+}
+
+function applyMapHeadingFromPhone(force){
+  if(!mapHeadingUpEnabled||!mapRotateAvailable||!map) return;
+  if(liveHeading===null||!isFinite(Number(liveHeading))) return;
+
+  var h=((Number(liveHeading)%360)+360)%360;
+
+  if(!force&&lastAppliedMapHeading!==null){
+    var diff=Math.abs(h-lastAppliedMapHeading);
+    if(diff>180) diff=360-diff;
+    if(diff<2) return;
+  }
+
+  lastAppliedMapHeading=h;
+
+  try{
+    if(typeof map.setHeading==="function"){
+      map.setHeading(h,{ease:0.18,deadzone:0.8});
+    }else if(typeof map.setBearing==="function"){
+      map.setBearing((360-h)%360);
+    }
+  }catch(e){}
+
+  updateRotateStatus();
 }
 
 function switchSurveyTab(tab){
@@ -1245,8 +1416,18 @@ function initMap(){
 
   map = L.map("map",{
     minZoom:3,
-    maxZoom:24
+    maxZoom:24,
+    rotate:true,
+    touchRotate:true,
+    dragRotate:true,
+    shiftKeyRotate:true,
+    rotateControl:false
   }).setView([23.7,121],7);
+
+  mapRotateAvailable=(
+    typeof map.setBearing==="function" &&
+    typeof map.getBearing==="function"
+  );
 
   map.createPane("sectionPane");
   map.getPane("sectionPane").style.zIndex = 350;
@@ -1321,6 +1502,12 @@ function initMap(){
   // 比例尺獨立更新，不再依賴 updateLabels()。
   map.on("zoom",scheduleScaleRefresh);
 
+  if(mapRotateAvailable){
+    map.on("rotate",function(){
+      updateRotateStatus();
+    });
+  }
+
   updatePointMarkers(true);
   updateLabels(true);
   updateScaleDisplay();
@@ -1329,6 +1516,8 @@ function initMap(){
   setTimeout(updateScaleDisplay,80);
   setTimeout(updateSurveyLauncherVisibility,100);
   setTimeout(updateLocateLauncherVisibility,100);
+  setTimeout(updateRotateLauncherVisibility,100);
+  setTimeout(updateRotateStatus,120);
   setTimeout(updateMeasurePickControls,120);
 }
 
@@ -4021,6 +4210,7 @@ function refreshHeadingUiThrottled(){
   lastHeadingUiAt=now;
   updateTrackBearing();
   refreshHeadingIcon();
+  applyMapHeadingFromPhone(false);
 }
 
 function handleDeviceOrientation(event){
