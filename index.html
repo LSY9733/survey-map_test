@@ -1101,6 +1101,7 @@ var sectionLabelLayer = null;
 var selectedSections = {};
 var selectedYears = {};
 var liveWatchId = null;
+var liveHasCenteredOnce = false;
 var liveLocationMarker = null;
 var liveAccuracyCircle = null;
 var liveFollowMode = false;
@@ -4068,6 +4069,7 @@ function startLiveLocation(){
   }
 
   setLiveStatus("正在啟動高精度 GPS…");
+  liveHasCenteredOnce = false;
 
   liveWatchId = navigator.geolocation.watchPosition(
     function(pos){
@@ -4113,6 +4115,17 @@ function startLiveLocation(){
       }else{
         liveAccuracyCircle.setLatLng([lat,lon]);
         liveAccuracyCircle.setRadius(acc);
+      }
+
+      // 第一次成功取得即時 GPS 時，不論跟隨模式是否開啟，
+      // 都先自動跳到目前位置一次。
+      if(!liveHasCenteredOnce){
+        liveHasCenteredOnce=true;
+
+        try{
+          var targetZoom=Math.max(map.getZoom(),18);
+          map.setView([lat,lon],targetZoom,{animate:false});
+        }catch(e){}
       }
 
       if(liveFollowMode){
@@ -4171,6 +4184,7 @@ function stopLiveLocation(){
   }
 
   liveFollowMode = false;
+  liveHasCenteredOnce = false;
 
   if($("followBtn")){
     $("followBtn").innerHTML = "🎯 跟隨模式：關閉";
